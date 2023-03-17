@@ -58,7 +58,12 @@ def widget_factory(
     import pandas as pd
     import numpy as np
     import nyxus
+    import dask
+    import dask.array as da
     import os
+    
+    from napari.qt.threading import thread_worker
+
     
     intensity_path = str(Intensity.source.path)
     segmentation_path = str(Segmentation.source.path)
@@ -94,9 +99,54 @@ def widget_factory(
                                 #n_feature_calc_threads=Number_of_calculation_threads,
                                 #n_loader_threads=Number_of_loader_threads,
                                 using_gpu = -1)
+        
+    print(type(Intensity.data))
     
-    #result = nyxus_object.featurize_memory(Intensity.data, Segmentation.data)
-  
+    @thread_worker
+    def compute_features(Intensity, Segmentation):
+        return nyxus_object.featurize(Intensity, Segmentation)
+
+        
+    #result = nyxus_object.featurize(Intensity.data, Segmentation.data)
+    
+    
+    if (type(Intensity.data) == dask.array.core.Array):
+        
+        result = nyxus_object.featurize_dask(Intensity.data, Segmentation.data)
+        
+        print(result)
+        
+        """
+        import itertools
+        #Intensity.data.compute()
+        #Segmentation.data.compute()
+        #results = da.apply_gufunc(nyxus_object.featurize, "(i,j,k),(i,j,k)->()", Intensity.data, Segmentation.data, output_dtypes=np.ndarray)
+        
+        print(Intensity.data.blocks[0].compute())
+        return
+        
+        
+        results = da.map_blocks(nyxus_object.featurize, Intensity.data, Segmentation.data, dtype=np.ndarray, meta=np.array((), dtype=np.uint8))
+        
+        
+        results = []
+        for idx in itertools.product(*map(range, Intensity.data.blocks.shape)):
+            print(idx)
+            intens_chunk = Intensity.data.blocks[idx]
+            seg_chunk = Segmentation.data.blocks[idx] 
+            #result = nyxus_object.featurize(intens_chunk.compute(), seg_chunk.compute())
+            results.append(nyxus_object.featurize(intens_chunk.compute(), seg_chunk.compute()))
+        
+        print("before results compute")
+        print(results.compute())
+        print("after results compute")
+        return
+        """
+    else:
+        worker = compute_features(Intensity.data, Segmentation.data)
+    
+    #print(result)
+    """
     if (not os.path.isfile(segmentation_path) and not os.path.isdir(segmentation_path)):
         
         #save and load image data until in memory api is complete
@@ -122,7 +172,7 @@ def widget_factory(
         im = Image.fromarray(Segmentation.data)
         im.save('intensity.tif')
         segmentation_path = 'intensity.tif'
-    
+
 
     result = None
     if (os.path.isdir(intensity_path)):
@@ -146,30 +196,51 @@ def widget_factory(
     
     else:
        show_info("Invalid input type. Please load an image or directory of images.")
+    """
 
-
-    if (Save_to_csv):
-        show_info("Saving results to " + Output_path + "out.csv")
-        result.to_csv(Output_path + 'out.csv', sep='\t', encoding='utf-8')
+    #if (Save_to_csv):
+    #    show_info("Saving results to " + Output_path + "out.csv")
+    #    result.to_csv(Output_path + 'out.csv', sep='\t', encoding='utf-8')
     
     # Create window for the DataFrame viewer
-    win = FeaturesWidget()
-    scroll = QScrollArea()
-    layout = QVBoxLayout()
-    table = QTableWidget()
-    scroll.setWidget(table)
-    layout.addWidget(table)
-    win.setLayout(layout)    
-    win.setWindowTitle("Feature Results")
+    
+    
+    
+    
+    """
+    global table
+    table = None
+    
+    @thread_worker
+    def create_table(result):
+        global table
+        win = FeaturesWidget()
+        scroll = QScrollArea()
+        layout = QVBoxLayout()
+        table = QTableWidget()
+        scroll.setWidget(table)
+        layout.addWidget(table)
+        win.setLayout(layout)    
+        win.setWindowTitle("Feature Results")
+        table.setColumnCount(len(result.columns))
+        table.setRowCount(len(result.index))
+        table.setHorizontalHeaderLabels(result.columns)
+        for i in range(len(result.index)):
+            for j in range(len(result.columns)):
+                table.setItem(i,j,QTableWidgetItem(str(result.iloc[i, j])))
+        table.cellClicked.connect(cell_was_clicked)
+        # add DataFrame to Viewer
+        viewer.window.add_dock_widget(win)
+        return True
 
     # Add DataFrame to widget window
-    table.setColumnCount(len(result.columns))
-    table.setRowCount(len(result.index))
-    table.setHorizontalHeaderLabels(result.columns)
-    for i in range(len(result.index)):
-        for j in range(len(result.columns)):
-            table.setItem(i,j,QTableWidgetItem(str(result.iloc[i, j])))
+    def on_nyxus_return(result):
+        table_worker = create_table(result)
+        table_worker.start()
+        
 
+    worker.returned.connect(on_nyxus_return)
+    worker.start()
         
     global labels
     global current_label
@@ -212,10 +283,6 @@ def widget_factory(
             
             highlight_value(cell_value)
        
-    table.cellClicked.connect(cell_was_clicked)
-
-    # add DataFrame to Viewer
-    viewer.window.add_dock_widget(win)
     
     #layer = viewer.layers[str(Segmentation)]
     #print(viewer.layers)
@@ -225,4 +292,4 @@ def widget_factory(
         coords = np.round(event.position).astype(int)
         value = layer.data[coords[0]][coords[1]]
         table.selectRow(value)
-    
+    """
