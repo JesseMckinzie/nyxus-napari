@@ -108,13 +108,18 @@ def widget_factory(
 
         
     #result = nyxus_object.featurize(Intensity.data, Segmentation.data)
-    
+    result = None
     
     if (type(Intensity.data) == dask.array.core.Array):
         
+        print(Intensity.data)
+        #input()
+        
         result = nyxus_object.featurize_dask(Intensity.data, Segmentation.data)
         
-        print(result)
+        #print(result)
+        
+        input()
         
         """
         import itertools
@@ -143,7 +148,8 @@ def widget_factory(
         return
         """
     else:
-        worker = compute_features(Intensity.data, Segmentation.data)
+        #worker = compute_features(Intensity.data, Segmentation.data)
+        result = nyxus_object.featurize(Intensity.data, Segmentation.data)
     
     #print(result)
     """
@@ -204,7 +210,79 @@ def widget_factory(
     
     # Create window for the DataFrame viewer
     
+    # Create window for the DataFrame viewer
+    win = FeaturesWidget()
+    scroll = QScrollArea()
+    layout = QVBoxLayout()
+    table = QTableWidget()
+    scroll.setWidget(table)
+    layout.addWidget(table)
+    win.setLayout(layout)    
+    win.setWindowTitle("Feature Results")
+
+    # Add DataFrame to widget window
+    table.setColumnCount(len(result.columns))
+    table.setRowCount(len(result.index))
+    table.setHorizontalHeaderLabels(result.columns)
+    for i in range(len(result.index)):
+        for j in range(len(result.columns)):
+            table.setItem(i,j,QTableWidgetItem(str(result.iloc[i, j])))
+
+        
+    global labels
+    global current_label
     
+    seg = Segmentation.data
+    labels = np.zeros_like(seg)
+    def highlight_value(value):
+        
+        global current_label
+        global labels
+        global labels_added
+
+        removed = False
+
+        for ix, iy in np.ndindex(seg.shape):
+
+            if (int(seg[ix, iy]) == int(value)):
+
+                if (labels[ix, iy] != 0):
+                    labels[ix, iy] = 0
+                else:
+                    labels[ix, iy] = int(value)
+        
+        if (not removed):
+            current_label += 1
+            
+        if (not labels_added):
+            viewer.add_labels(np.array(labels).astype('int8'), name="Selected ROI")
+            labels_added = True
+        else:
+            viewer.layers["Selected ROI"].data = np.array(labels).astype('int8')
+
+            
+    def cell_was_clicked(self, event):
+        current_column = table.currentColumn()
+        
+        if(current_column == 2):
+            current_row = table.currentRow()
+            cell_value = table.item(current_row, current_column).text()
+            
+            highlight_value(cell_value)
+       
+    table.cellClicked.connect(cell_was_clicked)
+
+    # add DataFrame to Viewer
+    viewer.window.add_dock_widget(win)
+    
+    #layer = viewer.layers[str(Segmentation)]
+    #print(viewer.layers)
+    
+    @Segmentation.mouse_drag_callbacks.append
+    def clicked_roi(layer, event):
+        coords = np.round(event.position).astype(int)
+        value = layer.data[coords[0]][coords[1]]
+        table.selectRow(value)
     
     
     """
