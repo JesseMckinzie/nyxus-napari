@@ -1,15 +1,28 @@
 from typing import Union
-from qtpy.QtWidgets import QWidget, QScrollArea, QTableWidget, QVBoxLayout,QTableWidgetItem
+from qtpy.QtWidgets import QWidget, QScrollArea, QTableWidget, QLineEdit, QVBoxLayout, QHBoxLayout, QTableWidgetItem, QLabel, QAbstractSlider, QSlider
+from qtpy.QtCore import Qt, QSize
 from qtpy import QtCore, QtGui, QtWidgets, uic
 import napari
 from napari.layers import Image
 from napari.utils.notifications import show_info
 from magicgui import magic_factory
 from enum import Enum
-import numpy as np
+import numpy as np 
 import pandas as pd
+from magicgui import magicgui
+
+
+from napari.qt.threading import thread_worker
+
+from superqt import QLabeledDoubleRangeSlider
+
+from nyxus_napari.range_slider import RangeSlider
+
+import dask
+import psutil
 
 import nyxus
+from nyxus_napari import util
 
 class Features(Enum):
     All = "*ALL*"
@@ -25,6 +38,7 @@ class Features(Enum):
     All_but_GLCM= "*ALL_BUT_GLCM*"
     
 class FeaturesWidget(QWidget):
+    
     
     @QtCore.Slot(QtWidgets.QTableWidgetItem)
     def onClicked(self, it):
@@ -193,6 +207,191 @@ class NyxusNapari:
         if (not self.colormap_added):
             self.viewer.add_image(np.array(self.colormap), name="Colormap")
             self.colormap_added = True
+            
         else:
             self.viewer.layers["Colormap"].data = np.array(self.colormap)
+        
+        if (self.slider_added):
+            self._update_slider([min_value, max_value])
+        else:
+            self._add_range_slider(min_value, max_value, self.result.columns[logicalIndex])
+        
     
+    
+    def _get_label_from_range(self, min_bound, max_bound):
+
+        for ix, iy in np.ndindex(self.colormap.shape):
+            
+            if (self.seg[ix, iy] != 0):
+                
+                if(np.isnan(self.label_values[int(self.seg[ix, iy])])):
+                    continue
+                
+                value = self.label_values[int(self.seg[ix, iy])]
+                
+                if (value <= max_bound and value >= min_bound):
+                    self.labels[ix, iy] = self.seg[ix, iy]
+                    self.colormap[ix, iy] = value
+                else:
+                    self.labels[ix, iy] = 0
+                    self.colormap[ix, iy] = 0
+                
+        if (not self.colormap_added):
+            self.viewer.add_image(np.array(self.colormap), name="Colormap")
+            self.colormap_added = True
+            
+        else:
+            self.viewer.layers["Colormap"].data = np.array(self.colormap)
+            
+             
+        if (not self.labels_added):
+            self.viewer.add_labels(np.array(self.labels).astype('int8'), name="Selected ROI")
+            self.labels_added = True
+            
+        else:
+            self.viewer.layers["Selected ROI"].data = np.array(self.labels).astype('int8')
+            
+    
+    def _add_range_slider(self, min_value, max_value, name):
+        min_value = util.round_down_to_5_sig_figs(min_value)
+        max_value = util.round_up_to_5_sig_figs(max_value)
+        
+        if (self.slider_added):
+            self.slider.setRange(min_value, max_value)
+            self.dock_widget.setWindowTitle(name)
+
+        else:
+            self.slider = RangeSlider(QtCore.Qt.Horizontal)
+            self.slider.setMinimumHeight(30)
+            self.slider.setMinimum(min_value)
+            self.slider.setMaximum(max_value)
+            self.slider.setLow(min_value)
+            self.slider.setHigh(max_value)
+            #self.slider.setTickPosition(QtWidgets.QSlider.TicksBelow)
+            self.slider.sliderMoved.connect(self._update_slider)
+            
+            layout = QVBoxLayout()
+            self.name_label = QLabel(name)
+            self.name_label.setAlignment(Qt.AlignCenter)
+            layout.addWidget(self.name_label)
+            
+            layout.addWidget(self.slider)
+            
+            """
+            slider_hbox = QHBoxLayout()
+            slider_hbox.setContentsMargins(0, 0, 0, 0)
+            layout.setContentsMargins(0, 0, 0, 0)
+            layout.setSpacing(0)
+            label_minimum = QLabel(alignment=QtCore.Qt.AlignLeft)
+            #self.slider.minimumChanged.connect(label_minimum.setNum)
+            label_maximum = QLabel(alignment=QtCore.Qt.AlignRight)
+            #self.slider.maximumChanged.connect(label_maximum.setNum)
+            layout.addWidget(self.slider)
+            layout.addLayout(slider_hbox)
+            slider_hbox.addWidget(label_minimum, QtCore.Qt.AlignLeft)
+            slider_hbox.addWidget(label_maximum, QtCore.Qt.AlignRight)
+            layout.addStretch()
+            """
+            
+            widget = QWidget()
+            widget.setLayout(layout)
+            self.dock_widget = self.viewer.window.add_dock_widget(widget)
+            self.dock_widget.setWindowTitle(name)
+            self.dock_widget.resizeEvent = self._update_slider_size
+            
+            self.min_box = QLineEdit(str(min_value))
+            self.min_box.setReadOnly(True)
+            self.max_box = QLineEdit(str(max_value))
+            self.max_box.setReadOnly(True)
+
+            #self.value_box = QLineEdit(str(initial_value))
+            #self.value_box.setReadOnly(True)
+            
+            hlayout = QHBoxLayout()
+            hlayout.addWidget(self.min_box)
+            hlayout.addWidget(self.max_box)
+            layout.addLayout(hlayout)
+            
+            #self.dock_widget.addLayout(slider_vbox)
+            
+            # Add a label to the dock widget to display text at the top
+            self.text = name
+            self.label = QLabel("Adjust Range")
+            self.label.setAlignment(Qt.AlignCenter)
+            self.dock_widget.setTitleBarWidget(self.label)
+
+            self.slider_added = True
+        
+    def _update_slider_size(self, event):
+        print(event)
+        #dock_widget = self.slider.parent()
+        #slider_size = dock_widget.size()
+        #self.slider.resize(event.size())
+        
+        
+        
+        
+        
+        # Calculate the size of the handles based on the slider size
+        #handle_size = int(slider_size.height() * 0.8)
+        #handle_margin = int((slider_size.height() - handle_size) / 2)
+        
+        #self.slider.setStyleSheet('''
+        #    QLabeledDoubleRangeSlider::handle:horizontal {
+        #        height: 1000px;
+        #        width: 1000px;
+        #    }
+                                  
+        #''')
+        
+        # Update the size of the handles by modifying their stylesheet
+        """
+        handle_stylesheet = (
+            f"QLabeledDoubleRangeSlider::handle:horizontal {{"
+            f"height: {handle_size}px;"
+            f"margin-top: {handle_margin}px;"
+            f"margin-bottom: {handle_margin}px;"
+            "}"
+        )
+        self.slider.setStyleSheet(handle_stylesheet)
+        """
+        #self.slider.setFixedWidth(event.size().width())
+        
+        #self.slider.leftHandle().setFixedSize(handle_size, handle_size)
+        #self.slider.rightHandle().setFixedSize(handle_size, handle_size)
+        
+    def _update_slider(self, event):
+        print(event)
+        #self._get_label_from_range(event[0], event[1])
+        
+    
+    """
+    def _add_range_slider(self, min_value, max_value):
+        
+        if (self.slider_added):
+            self.slider.setRange(min_value, max_value)
+
+        else:
+            self.slider = QLabeledDoubleRangeSlider(Qt.Orientation.Horizontal)
+            self.slider.setRange(min_value, max_value)
+            self.slider.setValue([min_value, max_value])
+            self.slider.valueChanged.connect(self._update_slider)
+            
+            self.viewer.window.add_dock_widget(self.slider)
+            
+            
+            # Connect to the resizeEvent of the parent widget
+            parent = self.viewer.window
+            
+            print(dir(self.viewer.window))
+            
+            #self.slider.resize(parent.size().width(), parent.size().height())
+
+            #parent.resizeEvent = lambda event: self.slider.resize(parent.size().width(), parent.size().height())
+
+            self.slider_added = True
+        
+    def _update_slider(self, event):
+
+        self._get_label_from_range(event[0], event[1])
+    """
